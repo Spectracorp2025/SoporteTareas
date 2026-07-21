@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 
+        getUserData().role == 'ADMIN';
+    }
+
+    function isApproved() {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) && 
+        getUserData().status == 'APROBADO';
+    }
+
+    // Default deny rule
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // PROFILES Rules
+    match /profiles/{userId} {
+      allow read: if isSignedIn() && (isOwner(userId) || isAdmin());
+      allow create: if isSignedIn() && isOwner(userId);
+      allow update: if isSignedIn() && (
+        isAdmin() || 
+        (isOwner(userId) && 
+          request.resource.data.role == resource.data.role && 
+          request.resource.data.email == resource.data.email &&
+          (request.resource.data.status == 'PENDIENTE_APROBACION' || request.resource.data.status == resource.data.status)
+        )
+      );
+      allow delete: if isAdmin();
+    }
+
+    // CONFIG Rules
+    match /config/settings {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // TASKS Rules
+    match /tasks/{taskId} {
+      allow read, write: if isAdmin();
+      allow read: if isApproved() && resource.data.assignedTo == request.auth.uid;
+      allow update: if isApproved() && 
+        resource.data.assignedTo == request.auth.uid &&
+        request.resource.data.id == resource.data.id &&
+        request.resource.data.code == resource.data.code &&
+        request.resource.data.title == resource.data.title &&
+        request.resource.data.description == resource.data.description &&
+        request.resource.data.createdAt == resource.data.createdAt &&
+        request.resource.data.deadline == resource.data.deadline &&
+        request.resource.data.priority == resource.data.priority &&
+        request.resource.data.assignedTo == resource.data.assignedTo;
+    }
+
+    // NOTIFICATIONS Rules
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.userId == 'ADMIN' || isAdmin());
+      allow create: if isSignedIn() && (isAdmin() || isApproved());
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    // LOGS Rules
+    match /logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
+      allow update, delete: if false;
+    }
+  }
+}

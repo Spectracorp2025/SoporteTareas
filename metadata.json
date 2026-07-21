@@ -1,0 +1,6 @@
+{
+  "name": "Gestión de Soporte Técnico",
+  "description": "Aplicación web moderna y profesional para administrar equipos de soporte técnico, con control de tareas, solicitudes de ingreso, estados y pagos estimados.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

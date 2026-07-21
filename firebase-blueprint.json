@@ -1,0 +1,112 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile containing roles and status",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "fullName": { "type": "string" },
+        "age": { "type": "number" },
+        "country": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["ADMIN", "WORKER"] },
+        "status": { "type": "string", "enum": ["PENDIENTE_REGISTRO", "PENDIENTE_APROBACION", "APROBADO", "RECHAZADO"] },
+        "rejectionReason": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["uid", "email", "role", "status", "createdAt"]
+    },
+    "SystemSettings": {
+      "title": "SystemSettings",
+      "description": "Global application configuration",
+      "type": "object",
+      "properties": {
+        "weeklyPaymentCOP": { "type": "number" },
+        "adminWhatsApp": { "type": "string" },
+        "groupWhatsAppLink": { "type": "string" },
+        "businessProfileWhatsAppLink": { "type": "string" },
+        "teamName": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "primaryColor": { "type": "string" }
+      },
+      "required": ["weeklyPaymentCOP", "adminWhatsApp", "teamName", "primaryColor"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "Technical support task assigned to a worker",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "deadline": { "type": "string" },
+        "deadlineTime": { "type": "string" },
+        "priority": { "type": "string" },
+        "assignedTo": { "type": "string" },
+        "assignedToName": { "type": "string" },
+        "requiresSupportMaterial": { "type": "boolean" },
+        "status": { "type": "string" },
+        "rejectionComment": { "type": "string" },
+        "history": { "type": "array" }
+      },
+      "required": ["id", "code", "title", "createdAt", "status", "assignedTo"]
+    },
+    "SystemNotification": {
+      "title": "SystemNotification",
+      "description": "Alert or update message for a user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "read": { "type": "boolean" },
+        "type": { "type": "string" }
+      },
+      "required": ["userId", "title", "message", "createdAt", "read"]
+    },
+    "SystemLog": {
+      "title": "SystemLog",
+      "description": "Admin log tracing operational changes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "action": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userRole": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "details": { "type": "string" }
+      },
+      "required": ["action", "userId", "userName", "timestamp"]
+    }
+  },
+  "firestore": {
+    "profiles/{userId}": {
+      "schema": "UserProfile",
+      "description": "User account profiles detailing identity and role approval state"
+    },
+    "config/settings": {
+      "schema": "SystemSettings",
+      "description": "Global administration parameters like pay rates and contact links"
+    },
+    "tasks/{taskId}": {
+      "schema": "Task",
+      "description": "Work orders assigned to support members"
+    },
+    "notifications/{notificationId}": {
+      "schema": "SystemNotification",
+      "description": "Unread alerts shown to support members or admins"
+    },
+    "logs/{logId}": {
+      "schema": "SystemLog",
+      "description": "Audit trails record of all task/setting updates"
+    }
+  }
+}
