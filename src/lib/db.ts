@@ -305,8 +305,10 @@ class LocalStorageDB {
   }
 
   getProfileByEmail(email: string): UserProfile | null {
+    if (!email) return null;
     const profiles = this.getProfiles();
-    return profiles.find(p => p.email.toLowerCase() === email.toLowerCase()) || null;
+    const targetEmail = email.toLowerCase();
+    return profiles.find(p => p && p.email && p.email.toLowerCase() === targetEmail) || null;
   }
 
   saveProfile(profile: UserProfile): UserProfile {
@@ -1262,30 +1264,26 @@ export const dbService = {
 
 // Auto Payment Calculator helper
 export function calculatePayments(workers: UserProfile[], tasks: Task[], weeklyBasePayment: number): PaymentCalculation[] {
-  const workersList = workers.filter(w => w.role === 'WORKER' && w.status === 'APROBADO');
+  const safeWorkers = Array.isArray(workers) ? workers.filter(Boolean) : [];
+  const safeTasks = Array.isArray(tasks) ? tasks.filter(Boolean) : [];
+  const workersList = safeWorkers.filter(w => w.role === 'WORKER' && w.status === 'APROBADO');
   
   return workersList.map(worker => {
-    const workerTasks = tasks.filter(t => t.assignedTo === worker.uid);
+    const workerTasks = safeTasks.filter(t => t && t.assignedTo === worker.uid);
     const totalTasks = workerTasks.length;
     const approvedTasks = workerTasks.filter(t => t.status === 'APROBADA').length;
-    const pendingTasks = workerTasks.filter(t => t.status === 'PENDIENTE' || t.status === 'ACEPTADA' || t.status === 'EN_PROCESO').length;
+    const pendingTasks = workerTasks.filter(t => t && (t.status === 'PENDIENTE' || t.status === 'ACEPTADA' || t.status === 'EN_PROCESO')).length;
     const rejectedTasks = workerTasks.filter(t => t.status === 'RECHAZADA').length;
     
     // Non-completed / Faltantes (anything not approved and not rejected)
     const missingTasks = workerTasks.filter(t => t.status !== 'APROBADA').length;
     
-    // Compliance rate is percentage of approved tasks out of total assigned tasks
-    // If no tasks assigned, compliance is 100% by default or 0% depending on expectation.
-    // Let's assume 100% if no tasks assigned to not penalize them, or 0% if they haven't done anything. 
-    // Usually, 100% is friendlier for no-task weeks, but let's make it 100% if totalTasks === 0.
     const fulfillmentRate = totalTasks > 0 ? Math.round((approvedTasks / totalTasks) * 100) : 100;
-    
-    // Suggested payment is weekly base proportional to fulfillment rate
-    const suggestedPayment = Math.round((weeklyBasePayment * fulfillmentRate) / 100);
+    const suggestedPayment = Math.round(((weeklyBasePayment || 0) * fulfillmentRate) / 100);
 
     return {
       uid: worker.uid,
-      fullName: worker.fullName || worker.displayName,
+      fullName: worker.fullName || worker.displayName || 'Técnico',
       totalTasks,
       approvedTasks,
       pendingTasks,
