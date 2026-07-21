@@ -37,6 +37,26 @@ import {
 // The current user email is carlosdelgado.neska@gmail.com
 export const ADMIN_EMAIL = 'carlosdelgado.neska@gmail.com';
 
+// Helper function to recursively remove any properties with 'undefined' values
+// so that Firebase Firestore setDoc/addDoc/updateDoc calls never fail with "Unsupported field value: undefined"
+function cleanForFirestore<T>(obj: T): T {
+  if (obj === null || typeof obj !== 'object') {
+    return obj;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(item => cleanForFirestore(item)) as unknown as T;
+  }
+
+  const cleaned: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      cleaned[key] = cleanForFirestore(value);
+    }
+  }
+  return cleaned as T;
+}
+
 // Mock Initial Data for LocalStorage Fallback
 const DEFAULT_SETTINGS: SystemSettings = {
   weeklyPaymentCOP: 250000,
@@ -649,18 +669,18 @@ export const dbService = {
   updateSettings: async (settings: Partial<SystemSettings>, adminUser: UserProfile): Promise<SystemSettings> => {
     if (isFirebaseEnabled) {
       const docRef = doc(firebaseDb, 'config', 'settings');
-      await setDoc(docRef, settings, { merge: true });
+      await setDoc(docRef, cleanForFirestore(settings), { merge: true });
       const snap = await getDoc(docRef);
       
       // Log it
-      await addDoc(collection(firebaseDb, 'logs'), {
+      await addDoc(collection(firebaseDb, 'logs'), cleanForFirestore({
         action: 'AJUSTES_MODIFICADOS',
         userId: adminUser.uid,
-        userName: adminUser.fullName || adminUser.displayName,
+        userName: adminUser.fullName || adminUser.displayName || 'Admin',
         userRole: 'ADMIN',
         timestamp: new Date().toISOString(),
         details: JSON.stringify(settings)
-      });
+      }));
 
       return snap.data() as SystemSettings;
     } else {
@@ -695,7 +715,7 @@ export const dbService = {
       id: 'log_' + Date.now(),
       action: 'USUARIO_APROBADO',
       userId: adminUser.uid,
-      userName: adminUser.fullName || adminUser.displayName,
+      userName: adminUser.fullName || adminUser.displayName || 'Admin',
       userRole: 'ADMIN' as const,
       timestamp: new Date().toISOString(),
       details: `Usuario UID ${uid} aprobado.`
@@ -703,20 +723,22 @@ export const dbService = {
 
     if (isFirebaseEnabled) {
       const docRef = doc(firebaseDb, 'profiles', uid);
-      await updateDoc(docRef, { status: 'APROBADO', rejectionReason: '' });
+      await updateDoc(docRef, cleanForFirestore({ status: 'APROBADO', rejectionReason: '' }));
       const snap = await getDoc(docRef);
       
-      await addDoc(collection(firebaseDb, 'logs'), actionLog);
+      await addDoc(collection(firebaseDb, 'logs'), cleanForFirestore(actionLog));
       
-      // Send Notification to user
-      await addDoc(collection(firebaseDb, 'notifications'), {
-        userId: uid,
-        title: 'Cuenta Aprobada 🎉',
-        message: '¡Felicitaciones! El administrador ha aprobado tu cuenta. Ya puedes acceder al dashboard.',
-        createdAt: new Date().toISOString(),
-        read: false,
-        type: 'SUCCESS'
-      });
+      // Send Notification to user if valid UID
+      if (uid) {
+        await addDoc(collection(firebaseDb, 'notifications'), cleanForFirestore({
+          userId: uid,
+          title: 'Cuenta Aprobada 🎉',
+          message: '¡Felicitaciones! El administrador ha aprobado tu cuenta. Ya puedes acceder al dashboard.',
+          createdAt: new Date().toISOString(),
+          read: false,
+          type: 'SUCCESS'
+        }));
+      }
 
       return snap.data() as UserProfile;
     } else {
@@ -749,28 +771,30 @@ export const dbService = {
       id: 'log_' + Date.now(),
       action: 'USUARIO_RECHAZADO',
       userId: adminUser.uid,
-      userName: adminUser.fullName || adminUser.displayName,
+      userName: adminUser.fullName || adminUser.displayName || 'Admin',
       userRole: 'ADMIN' as const,
       timestamp: new Date().toISOString(),
-      details: `Usuario UID ${uid} rechazado. Motivo: ${comment}`
+      details: `Usuario UID ${uid} rechazado. Motivo: ${comment || 'Sin motivo'}`
     };
 
     if (isFirebaseEnabled) {
       const docRef = doc(firebaseDb, 'profiles', uid);
-      await updateDoc(docRef, { status: 'RECHAZADO', rejectionReason: comment });
+      await updateDoc(docRef, cleanForFirestore({ status: 'RECHAZADO', rejectionReason: comment || '' }));
       const snap = await getDoc(docRef);
       
-      await addDoc(collection(firebaseDb, 'logs'), actionLog);
+      await addDoc(collection(firebaseDb, 'logs'), cleanForFirestore(actionLog));
       
       // Send Notification to user
-      await addDoc(collection(firebaseDb, 'notifications'), {
-        userId: uid,
-        title: 'Solicitud de Ingreso Rechazada ❌',
-        message: `Tu solicitud de ingreso fue rechazada por el administrador. Motivo: ${comment}`,
-        createdAt: new Date().toISOString(),
-        read: false,
-        type: 'ALERT'
-      });
+      if (uid) {
+        await addDoc(collection(firebaseDb, 'notifications'), cleanForFirestore({
+          userId: uid,
+          title: 'Solicitud de Ingreso Rechazada ❌',
+          message: `Tu solicitud de ingreso fue rechazada por el administrador. Motivo: ${comment || 'Sin motivo'}`,
+          createdAt: new Date().toISOString(),
+          read: false,
+          type: 'ALERT'
+        }));
+      }
 
       return snap.data() as UserProfile;
     } else {
@@ -823,7 +847,7 @@ export const dbService = {
       id: 'log_' + Date.now(),
       action: 'USUARIO_ELIMINADO',
       userId: adminUser.uid,
-      userName: adminUser.fullName || adminUser.displayName,
+      userName: adminUser.fullName || adminUser.displayName || 'Admin',
       userRole: 'ADMIN' as const,
       timestamp,
       details: `Usuario ${targetName} (UID: ${uid}) eliminado del sistema.`
@@ -845,17 +869,17 @@ export const dbService = {
             id: 'hist_' + Date.now() + '_' + Math.random().toString(36).substring(2, 5),
             status: 'PENDIENTE' as const,
             changedBy: adminUser.uid,
-            changedByName: adminUser.fullName || adminUser.displayName,
+            changedByName: adminUser.fullName || adminUser.displayName || 'Admin',
             timestamp,
             comment: 'Tarea liberada debido a la eliminación de su encargado'
           }
         ];
-        await updateDoc(doc(firebaseDb, 'tasks', taskDoc.id), {
+        await updateDoc(doc(firebaseDb, 'tasks', taskDoc.id), cleanForFirestore({
           assignedTo: '',
           assignedToName: '',
           status: 'PENDIENTE',
           history: updatedHistory
-        });
+        }));
       }
 
       // 3. Fetch and delete notifications of this user
@@ -866,7 +890,7 @@ export const dbService = {
       }
 
       // 4. Log the deletion
-      await addDoc(collection(firebaseDb, 'logs'), actionLog);
+      await addDoc(collection(firebaseDb, 'logs'), cleanForFirestore(actionLog));
 
       return true;
     } else {
@@ -902,7 +926,7 @@ export const dbService = {
           id: 'hist_' + Date.now() + '_1',
           status: 'PENDIENTE',
           changedBy: adminUser.uid,
-          changedByName: adminUser.fullName || adminUser.displayName,
+          changedByName: adminUser.fullName || adminUser.displayName || 'Admin',
           timestamp: createdAt,
           comment: 'Tarea asignada inicialmente'
         }
@@ -912,27 +936,29 @@ export const dbService = {
     if (isFirebaseEnabled) {
       const docRef = await addDoc(collection(firebaseDb, 'tasks'), {});
       newTask.id = docRef.id;
-      await setDoc(docRef, newTask);
+      await setDoc(docRef, cleanForFirestore(newTask));
 
       // Log
-      await addDoc(collection(firebaseDb, 'logs'), {
+      await addDoc(collection(firebaseDb, 'logs'), cleanForFirestore({
         action: 'TAREA_CREADA',
         userId: adminUser.uid,
-        userName: adminUser.fullName || adminUser.displayName,
+        userName: adminUser.fullName || adminUser.displayName || 'Admin',
         userRole: 'ADMIN',
         timestamp: createdAt,
-        details: `Tarea creada: [${newTask.code}] ${newTask.title}. Asignada a ${newTask.assignedToName}`
-      });
+        details: `Tarea creada: [${newTask.code}] ${newTask.title}. Asignada a ${newTask.assignedToName || 'Nadie'}`
+      }));
 
-      // Notify Worker
-      await addDoc(collection(firebaseDb, 'notifications'), {
-        userId: newTask.assignedTo,
-        title: 'Nueva Tarea Asignada 📋',
-        message: `Se te ha asignado la tarea [${newTask.code}] ${newTask.title}. Prioridad: ${newTask.priority}`,
-        createdAt,
-        read: false,
-        type: newTask.priority === 'URGENTE' ? 'URGENT' : 'INFO'
-      });
+      // Notify Worker if assignedTo exists
+      if (newTask.assignedTo) {
+        await addDoc(collection(firebaseDb, 'notifications'), cleanForFirestore({
+          userId: newTask.assignedTo,
+          title: 'Nueva Tarea Asignada 📋',
+          message: `Se te ha asignado la tarea [${newTask.code}] ${newTask.title}. Prioridad: ${newTask.priority}`,
+          createdAt,
+          read: false,
+          type: newTask.priority === 'URGENTE' ? 'URGENT' : 'INFO'
+        }));
+      }
 
       return newTask;
     } else {
@@ -950,15 +976,17 @@ export const dbService = {
       });
 
       // Notify Worker
-      localDb.saveNotification({
-        id: 'notif_' + Date.now(),
-        userId: newTask.assignedTo,
-        title: 'Nueva Tarea Asignada 📋',
-        message: `Se te ha asignado la tarea [${newTask.code}] ${newTask.title}. Prioridad: ${newTask.priority}`,
-        createdAt,
-        read: false,
-        type: newTask.priority === 'URGENTE' ? 'URGENT' : 'INFO'
-      });
+      if (newTask.assignedTo) {
+        localDb.saveNotification({
+          id: 'notif_' + Date.now(),
+          userId: newTask.assignedTo,
+          title: 'Nueva Tarea Asignada 📋',
+          message: `Se te ha asignado la tarea [${newTask.code}] ${newTask.title}. Prioridad: ${newTask.priority}`,
+          createdAt,
+          read: false,
+          type: newTask.priority === 'URGENTE' ? 'URGENT' : 'INFO'
+        });
+      }
 
       return created;
     }
@@ -969,27 +997,29 @@ export const dbService = {
     
     if (isFirebaseEnabled) {
       const docRef = doc(firebaseDb, 'tasks', task.id);
-      await setDoc(docRef, task, { merge: true });
+      await setDoc(docRef, cleanForFirestore(task), { merge: true });
 
       // Log
-      await addDoc(collection(firebaseDb, 'logs'), {
+      await addDoc(collection(firebaseDb, 'logs'), cleanForFirestore({
         action: 'TAREA_MODIFICADA',
         userId: adminUser.uid,
-        userName: adminUser.fullName || adminUser.displayName,
+        userName: adminUser.fullName || adminUser.displayName || 'Admin',
         userRole: 'ADMIN',
         timestamp,
         details: `Tarea editada: [${task.code}] ${task.title}`
-      });
+      }));
 
       // Notify Worker
-      await addDoc(collection(firebaseDb, 'notifications'), {
-        userId: task.assignedTo,
-        title: 'Tarea Modificada ✏️',
-        message: `La tarea [${task.code}] ${task.title} ha sido modificada por el administrador.`,
-        createdAt: timestamp,
-        read: false,
-        type: 'INFO'
-      });
+      if (task.assignedTo) {
+        await addDoc(collection(firebaseDb, 'notifications'), cleanForFirestore({
+          userId: task.assignedTo,
+          title: 'Tarea Modificada ✏️',
+          message: `La tarea [${task.code}] ${task.title} ha sido modificada por el administrador.`,
+          createdAt: timestamp,
+          read: false,
+          type: 'INFO'
+        }));
+      }
 
       return task;
     } else {
@@ -1007,15 +1037,17 @@ export const dbService = {
       });
 
       // Notify Worker
-      localDb.saveNotification({
-        id: 'notif_' + Date.now(),
-        userId: task.assignedTo,
-        title: 'Tarea Modificada ✏️',
-        message: `La tarea [${task.code}] ${task.title} ha sido modificada por el administrador.`,
-        createdAt: timestamp,
-        read: false,
-        type: 'INFO'
-      });
+      if (task.assignedTo) {
+        localDb.saveNotification({
+          id: 'notif_' + Date.now(),
+          userId: task.assignedTo,
+          title: 'Tarea Modificada ✏️',
+          message: `La tarea [${task.code}] ${task.title} ha sido modificada por el administrador.`,
+          createdAt: timestamp,
+          read: false,
+          type: 'INFO'
+        });
+      }
 
       return updated;
     }
@@ -1026,31 +1058,39 @@ export const dbService = {
 
     if (isFirebaseEnabled) {
       const docRef = doc(firebaseDb, 'tasks', taskId);
-      // Get task before deleting to get assignee UID
-      const snap = await getDoc(docRef);
-      const task = snap.data() as Task;
+      // Get task before deleting to get assignee UID safely
+      let task: Task | null = null;
+      try {
+        const snap = await getDoc(docRef);
+        if (snap.exists()) {
+          task = snap.data() as Task;
+        }
+      } catch (e) {
+        console.error('Error fetching task prior to deletion:', e);
+      }
+
       await deleteDoc(docRef);
 
       // Log
-      await addDoc(collection(firebaseDb, 'logs'), {
+      await addDoc(collection(firebaseDb, 'logs'), cleanForFirestore({
         action: 'TAREA_ELIMINADA',
         userId: adminUser.uid,
-        userName: adminUser.fullName || adminUser.displayName,
+        userName: adminUser.fullName || adminUser.displayName || 'Admin',
         userRole: 'ADMIN',
         timestamp,
         details: `Tarea eliminada: [${code}] ${title}`
-      });
+      }));
 
-      if (task) {
-        // Notify Worker
-        await addDoc(collection(firebaseDb, 'notifications'), {
+      if (task && task.assignedTo) {
+        // Notify Worker ONLY if assignedTo is truthy and non-empty
+        await addDoc(collection(firebaseDb, 'notifications'), cleanForFirestore({
           userId: task.assignedTo,
           title: 'Tarea Cancelada/Eliminada 🗑️',
           message: `La tarea [${code}] ${title} asignada a ti ha sido eliminada por el administrador.`,
           createdAt: timestamp,
           read: false,
           type: 'ALERT'
-        });
+        }));
       }
 
       return true;
@@ -1069,7 +1109,7 @@ export const dbService = {
         details: `Tarea eliminada: [${code}] ${title}`
       });
 
-      if (task) {
+      if (task && task.assignedTo) {
         // Notify Worker
         localDb.saveNotification({
           id: 'notif_' + Date.now(),
@@ -1101,7 +1141,7 @@ export const dbService = {
         id: 'hist_' + Date.now(),
         status: newStatus,
         changedBy: user.uid,
-        changedByName: user.fullName || user.displayName,
+        changedByName: user.fullName || user.displayName || 'Usuario',
         timestamp,
         comment
       };
@@ -1118,43 +1158,43 @@ export const dbService = {
         updates.rejectionComment = '';
       }
 
-      await updateDoc(docRef, updates);
+      await updateDoc(docRef, cleanForFirestore(updates));
       const updatedSnap = await getDoc(docRef);
       const updatedTask = updatedSnap.data() as Task;
 
       // Log activity
-      await addDoc(collection(firebaseDb, 'logs'), {
+      await addDoc(collection(firebaseDb, 'logs'), cleanForFirestore({
         action: 'ESTADO_TAREA_ACTUALIZADO',
         userId: user.uid,
-        userName: user.fullName || user.displayName,
+        userName: user.fullName || user.displayName || 'Usuario',
         userRole: user.role,
         timestamp,
         details: `Tarea [${task.code}] cambió de ${task.status} a ${newStatus}.`
-      });
+      }));
 
       // Send appropriate notifications
       if (user.role === 'WORKER') {
         // Notify Admin
-        await addDoc(collection(firebaseDb, 'notifications'), {
+        await addDoc(collection(firebaseDb, 'notifications'), cleanForFirestore({
           userId: 'ADMIN',
           title: 'Estado de Tarea Actualizado 📋',
-          message: `${user.fullName || user.displayName} actualizó la tarea [${task.code}] a "${newStatus}".`,
+          message: `${user.fullName || user.displayName || 'Técnico'} actualizó la tarea [${task.code}] a "${newStatus}".`,
           createdAt: timestamp,
           read: false,
           type: newStatus === 'PENDIENTE_REVISION' ? 'URGENT' : 'INFO'
-        });
-      } else {
-        // Admin approved or rejected - notify Worker
-        await addDoc(collection(firebaseDb, 'notifications'), {
+        }));
+      } else if (task.assignedTo) {
+        // Admin approved or rejected - notify Worker if assignedTo exists
+        await addDoc(collection(firebaseDb, 'notifications'), cleanForFirestore({
           userId: task.assignedTo,
           title: newStatus === 'APROBADA' ? 'Tarea Aprobada! 🎉' : 'Tarea Rechazada/Requiere Corrección ❌',
           message: newStatus === 'APROBADA' 
             ? `Tu tarea [${task.code}] ${task.title} ha sido aprobada por el administrador.`
-            : `Tu tarea [${task.code}] ${task.title} fue rechazada. Motivo: ${comment}`,
+            : `Tu tarea [${task.code}] ${task.title} fue rechazada. Motivo: ${comment || 'Sin motivo'}`,
           createdAt: timestamp,
           read: false,
           type: newStatus === 'APROBADA' ? 'SUCCESS' : 'ALERT'
-        });
+        }));
       }
 
       return updatedTask;
@@ -1206,7 +1246,7 @@ export const dbService = {
           read: false,
           type: newStatus === 'PENDIENTE_REVISION' ? 'URGENT' : 'INFO'
         });
-      } else {
+      } else if (task.assignedTo) {
         // Admin approved or rejected - notify Worker
         localDb.saveNotification({
           id: 'notif_' + Date.now(),
