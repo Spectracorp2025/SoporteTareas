@@ -59,7 +59,7 @@ function cleanForFirestore<T>(obj: T): T {
 
 // Mock Initial Data for LocalStorage Fallback
 const DEFAULT_SETTINGS: SystemSettings = {
-  weeklyPaymentCOP: 250000,
+  weeklyPaymentCOP: 25000,
   adminWhatsApp: '+573151234567',
   groupWhatsAppLink: 'https://chat.whatsapp.com/ExampleGroupLink',
   businessProfileWhatsAppLink: 'https://wa.me/c/573151234567',
