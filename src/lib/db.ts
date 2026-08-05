@@ -30,8 +30,10 @@ import {
   SystemLog, 
   TaskStatus, 
   TaskPriority,
-  PaymentCalculation
+  PaymentCalculation,
+  WeeklyPaymentRecord
 } from '../types';
+import { getWeekDetails } from './dateUtils';
 
 // Default Admin Email - This can be checked dynamically or set manually
 // The current user email is carlosdelgado.neska@gmail.com
@@ -451,6 +453,28 @@ class LocalStorageDB {
     all.unshift(log);
     localStorage.setItem('tech_logs', JSON.stringify(all));
     return log;
+  }
+
+  getWeeklyPayments(weekId?: string): WeeklyPaymentRecord[] {
+    const raw = localStorage.getItem('tech_weekly_payments');
+    const all: WeeklyPaymentRecord[] = raw ? JSON.parse(raw) : [];
+    if (weekId) {
+      return all.filter(p => p.weekId === weekId);
+    }
+    return all;
+  }
+
+  saveWeeklyPayment(payment: WeeklyPaymentRecord): WeeklyPaymentRecord {
+    const raw = localStorage.getItem('tech_weekly_payments');
+    const all: WeeklyPaymentRecord[] = raw ? JSON.parse(raw) : [];
+    const index = all.findIndex(p => p.workerUid === payment.workerUid && p.weekId === payment.weekId);
+    if (index >= 0) {
+      all[index] = payment;
+    } else {
+      all.unshift(payment);
+    }
+    localStorage.setItem('tech_weekly_payments', JSON.stringify(all));
+    return payment;
   }
 }
 
@@ -921,6 +945,9 @@ export const dbService = {
       id,
       createdAt,
       status: 'PENDIENTE',
+      weekId: taskData.weekId || getWeekDetails(createdAt).weekId,
+      archived: false,
+      paid: false,
       history: [
         {
           id: 'hist_' + Date.now() + '_1',
@@ -1299,27 +1326,158 @@ export const dbService = {
     } else {
       return localDb.getLogs();
     }
+  },
+
+  // --- WEEKLY PAYMENTS ---
+  getWeeklyPayments: async (weekId?: string): Promise<WeeklyPaymentRecord[]> => {
+    if (isFirebaseEnabled) {
+      const colRef = collection(firebaseDb, 'weekly_payments');
+      const q = weekId ? query(colRef, where('weekId', '==', weekId)) : colRef;
+      const snap = await getDocs(q);
+      return snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as WeeklyPaymentRecord));
+    } else {
+      return localDb.getWeeklyPayments(weekId);
+    }
+  },
+
+  confirmWeeklyPayment: async (
+    workerUid: string,
+    workerName: string,
+    weekId: string,
+    weekLabel: string,
+    amountCOP: number,
+    totalTasks: number,
+    approvedTasks: number,
+    fulfillmentRate: number,
+    adminUser: UserProfile
+  ): Promise<WeeklyPaymentRecord> => {
+    const paymentId = `pay_${workerUid}_${weekId}`;
+    const timestamp = new Date().toISOString();
+    const record: WeeklyPaymentRecord = {
+      id: paymentId,
+      workerUid,
+      workerName,
+      weekId,
+      weekLabel,
+      totalTasks,
+      approvedTasks,
+      fulfillmentRate,
+      amountCOP,
+      paid: true,
+      paidAt: timestamp,
+      paidByAdminUid: adminUser.uid,
+      paidByAdminName: adminUser.fullName || adminUser.displayName || 'Admin'
+    };
+
+    if (isFirebaseEnabled) {
+      const docRef = doc(firebaseDb, 'weekly_payments', paymentId);
+      await setDoc(docRef, cleanForFirestore(record), { merge: true });
+
+      // Archive tasks of this worker for this week
+      const tasksSnap = await getDocs(query(collection(firebaseDb, 'tasks'), where('assignedTo', '==', workerUid)));
+      for (const tDoc of tasksSnap.docs) {
+        const t = tDoc.data() as Task;
+        const taskWeek = t.weekId || getWeekDetails(t.createdAt).weekId;
+        if (taskWeek === weekId) {
+          await updateDoc(doc(firebaseDb, 'tasks', tDoc.id), cleanForFirestore({
+            archived: true,
+            paid: true
+          }));
+        }
+      }
+
+      // Send Notification to Worker
+      await addDoc(collection(firebaseDb, 'notifications'), cleanForFirestore({
+        userId: workerUid,
+        title: 'Pago Semanal Confirmado 💰',
+        message: `El administrador ha confirmado tu pago de $${amountCOP.toLocaleString('es-CO')} COP para la ${weekLabel}. ¡Tus tareas de la semana han sido archivadas y estás listo para la nueva semana!`,
+        createdAt: timestamp,
+        read: false,
+        type: 'SUCCESS'
+      }));
+
+      // Log it
+      await addDoc(collection(firebaseDb, 'logs'), cleanForFirestore({
+        action: 'PAGO_SEMANAL_CONFIRMADO',
+        userId: adminUser.uid,
+        userName: adminUser.fullName || adminUser.displayName || 'Admin',
+        userRole: 'ADMIN',
+        timestamp,
+        details: `Pago de $${amountCOP.toLocaleString('es-CO')} COP confirmado para ${workerName} (${weekLabel}).`
+      }));
+
+      return record;
+    } else {
+      localDb.saveWeeklyPayment(record);
+
+      // Archive tasks in LocalStorage
+      const tasks = localDb.getTasks();
+      const updatedTasks = tasks.map(t => {
+        const taskWeek = t.weekId || getWeekDetails(t.createdAt).weekId;
+        if (t.assignedTo === workerUid && taskWeek === weekId) {
+          return { ...t, archived: true, paid: true };
+        }
+        return t;
+      });
+      localStorage.setItem('tech_tasks', JSON.stringify(updatedTasks));
+
+      localDb.saveNotification({
+        id: 'notif_' + Date.now(),
+        userId: workerUid,
+        title: 'Pago Semanal Confirmado 💰',
+        message: `El administrador ha confirmado tu pago de $${amountCOP.toLocaleString('es-CO')} COP para la ${weekLabel}. ¡Tus tareas de la semana han sido archivadas y estás listo para la nueva semana!`,
+        createdAt: timestamp,
+        read: false,
+        type: 'SUCCESS'
+      });
+
+      localDb.saveLog({
+        id: 'log_' + Date.now(),
+        action: 'PAGO_SEMANAL_CONFIRMADO',
+        userId: adminUser.uid,
+        userName: adminUser.fullName || adminUser.displayName || 'Admin',
+        userRole: 'ADMIN',
+        timestamp,
+        details: `Pago de $${amountCOP.toLocaleString('es-CO')} COP confirmado para ${workerName} (${weekLabel}).`
+      });
+
+      return record;
+    }
   }
 };
 
 // Auto Payment Calculator helper
-export function calculatePayments(workers: UserProfile[], tasks: Task[], weeklyBasePayment: number): PaymentCalculation[] {
+export function calculatePayments(
+  workers: UserProfile[],
+  tasks: Task[],
+  weeklyBasePayment: number,
+  paymentsList: WeeklyPaymentRecord[] = [],
+  targetWeekId?: string
+): PaymentCalculation[] {
   const safeWorkers = Array.isArray(workers) ? workers.filter(Boolean) : [];
   const safeTasks = Array.isArray(tasks) ? tasks.filter(Boolean) : [];
   const workersList = safeWorkers.filter(w => w.role === 'WORKER' && w.status === 'APROBADO');
   
   return workersList.map(worker => {
-    const workerTasks = safeTasks.filter(t => t && t.assignedTo === worker.uid);
+    const workerTasks = safeTasks.filter(t => {
+      if (!t || t.assignedTo !== worker.uid) return false;
+      if (!targetWeekId) return true;
+      const taskWeek = t.weekId || getWeekDetails(t.createdAt).weekId;
+      return taskWeek === targetWeekId;
+    });
+
     const totalTasks = workerTasks.length;
     const approvedTasks = workerTasks.filter(t => t.status === 'APROBADA').length;
     const pendingTasks = workerTasks.filter(t => t && (t.status === 'PENDIENTE' || t.status === 'ACEPTADA' || t.status === 'EN_PROCESO')).length;
     const rejectedTasks = workerTasks.filter(t => t.status === 'RECHAZADA').length;
-    
-    // Non-completed / Faltantes (anything not approved and not rejected)
     const missingTasks = workerTasks.filter(t => t.status !== 'APROBADA').length;
     
     const fulfillmentRate = totalTasks > 0 ? Math.round((approvedTasks / totalTasks) * 100) : 100;
     const suggestedPayment = Math.round(((weeklyBasePayment || 0) * fulfillmentRate) / 100);
+
+    const existingPayment = paymentsList.find(
+      p => p.workerUid === worker.uid && (!targetWeekId || p.weekId === targetWeekId)
+    );
 
     return {
       uid: worker.uid,
@@ -1330,7 +1488,10 @@ export function calculatePayments(workers: UserProfile[], tasks: Task[], weeklyB
       rejectedTasks,
       fulfillmentRate,
       suggestedPayment,
-      missingTasks
+      missingTasks,
+      isPaid: existingPayment ? existingPayment.paid : false,
+      paidAt: existingPayment?.paidAt,
+      weekId: targetWeekId
     };
   });
 }
