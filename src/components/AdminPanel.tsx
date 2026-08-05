@@ -50,9 +50,11 @@ import {
   SystemLog, 
   TaskPriority, 
   TaskStatus, 
-  PaymentCalculation 
+  PaymentCalculation,
+  WeeklyPaymentRecord
 } from '../types';
 import { calculatePayments } from '../lib/db';
+import { getRecentWeeksList, getWeekDetails, WeekDetails } from '../lib/dateUtils';
 
 interface AdminPanelProps {
   user: UserProfile;
@@ -61,6 +63,17 @@ interface AdminPanelProps {
   tasks: Task[];
   settings: SystemSettings;
   logs: SystemLog[];
+  weeklyPayments?: WeeklyPaymentRecord[];
+  onConfirmWeeklyPayment?: (
+    workerUid: string,
+    workerName: string,
+    weekId: string,
+    weekLabel: string,
+    amountCOP: number,
+    totalTasks: number,
+    approvedTasks: number,
+    fulfillmentRate: number
+  ) => Promise<void>;
   onApproveUser: (uid: string) => Promise<void>;
   onRejectUser: (uid: string, comment: string) => Promise<void>;
   onDeleteUser: (uid: string) => Promise<void>;
@@ -78,6 +91,8 @@ export default function AdminPanel({
   tasks,
   settings,
   logs,
+  weeklyPayments = [],
+  onConfirmWeeklyPayment,
   onApproveUser,
   onRejectUser,
   onDeleteUser,
@@ -124,10 +139,19 @@ export default function AdminPanel({
   const [settingsPrimaryColor, setSettingsPrimaryColor] = useState(settings.primaryColor);
   const [settingsSuccess, setSettingsSuccess] = useState('');
   const [settingsError, setSettingsError] = useState('');
+  const [isSettingsDirty, setIsSettingsDirty] = useState(false);
+  const [settingsFormLoading, setSettingsFormLoading] = useState(false);
 
-  // Sincronizar cambios en los ajustes cargados de la base de datos
+  // Week Selector State for Stats & Payments
+  const currentWeekDetails = getWeekDetails();
+  const [selectedWeekId, setSelectedWeekId] = useState<string>(currentWeekDetails.weekId);
+  const recentWeeks = getRecentWeeksList(8);
+  const selectedWeekInfo = recentWeeks.find(w => w.weekId === selectedWeekId) || currentWeekDetails;
+  const [paymentActionLoading, setPaymentActionLoading] = useState<string | null>(null);
+
+  // Sincronizar cambios en los ajustes solo si el usuario NO ha editado el formulario localmente
   useEffect(() => {
-    if (settings) {
+    if (settings && !isSettingsDirty) {
       setSettingsTeamName(settings.teamName || '');
       setSettingsWeeklyPayment((settings.weeklyPaymentCOP || 0).toString());
       setSettingsAdminWhatsApp(settings.adminWhatsApp || '');
@@ -136,7 +160,7 @@ export default function AdminPanel({
       setSettingsLogoUrl(settings.logoUrl || '');
       setSettingsPrimaryColor(settings.primaryColor || '#6366f1');
     }
-  }, [settings]);
+  }, [settings, isSettingsDirty]);
 
   // Rejection reason popups / modals
   const [rejectingUserId, setRejectingUserId] = useState<string | null>(null);
@@ -161,8 +185,42 @@ export default function AdminPanel({
   const rejectedTasksCount = safeTasks.filter(t => t.status === 'RECHAZADA').length;
   const activeWorkersCount = approvedWorkers.length;
 
-  // Payments Estimation for Admin Panel
-  const paymentEstimates = calculatePayments(safeUsers, safeTasks, settings?.weeklyPaymentCOP || 0);
+  // Payments Estimation for Admin Panel filtered by Week
+  const paymentEstimates = calculatePayments(
+    safeUsers,
+    safeTasks,
+    settings?.weeklyPaymentCOP || 25000,
+    weeklyPayments || [],
+    selectedWeekId
+  );
+
+  const handleConfirmPayment = async (
+    workerUid: string,
+    workerName: string,
+    amount: number,
+    totalTasks: number,
+    approvedTasks: number,
+    fulfillmentRate: number
+  ) => {
+    if (!onConfirmWeeklyPayment) return;
+    setPaymentActionLoading(workerUid);
+    try {
+      await onConfirmWeeklyPayment(
+        workerUid,
+        workerName,
+        selectedWeekId,
+        selectedWeekInfo.label,
+        amount,
+        totalTasks,
+        approvedTasks,
+        fulfillmentRate
+      );
+    } catch (err) {
+      console.error('Error al confirmar pago', err);
+    } finally {
+      setPaymentActionLoading(null);
+    }
+  };
 
   // Format currency helper
   const formatCOP = (num: number) => {
@@ -311,6 +369,7 @@ export default function AdminPanel({
       return;
     }
 
+    setSettingsFormLoading(true);
     try {
       await onUpdateSettings({
         teamName: settingsTeamName,
@@ -321,9 +380,12 @@ export default function AdminPanel({
         logoUrl: settingsLogoUrl,
         primaryColor: settingsPrimaryColor
       });
+      setIsSettingsDirty(false);
       setSettingsSuccess('¡Ajustes de la plataforma guardados correctamente!');
     } catch (err: any) {
       setSettingsError(err.message || 'Error al guardar ajustes.');
+    } finally {
+      setSettingsFormLoading(false);
     }
   };
 
@@ -1008,34 +1070,51 @@ export default function AdminPanel({
                 )}
 
                 {/* Filters */}
-                <div className="flex flex-wrap gap-2 items-center bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-150 dark:border-gray-800 text-xs">
-                  <div className="flex items-center gap-1 bg-gray-50 dark:bg-gray-800/40 px-2 py-1 rounded-lg">
-                    <Search className="w-3.5 h-3.5 text-gray-400" />
+                <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between bg-white dark:bg-gray-900 p-3 rounded-xl border border-gray-150 dark:border-gray-800 text-xs shadow-sm">
+                  <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-800/60 px-3 py-1.5 rounded-xl border border-gray-200/50 dark:border-gray-700/50">
+                    <Search className="w-3.5 h-3.5 text-gray-400 shrink-0" />
                     <input
                       type="text"
                       placeholder="Buscar por código, título..."
                       value={taskSearch}
                       onChange={(e) => setTaskSearch(e.target.value)}
-                      className="bg-transparent focus:outline-none w-48 text-xs"
+                      className="bg-transparent focus:outline-none w-full sm:w-56 text-xs text-gray-800 dark:text-gray-100"
                     />
                   </div>
 
-                  <div className="w-px h-6 bg-gray-200 dark:bg-gray-800 mx-1"></div>
-
-                  <div className="flex gap-1.5">
-                    {['ALL', 'PENDIENTE', 'ACEPTADA', 'EN_PROCESO', 'PENDIENTE_REVISION', 'APROBADA', 'RECHAZADA'].map(status => (
-                      <button
-                        key={status}
-                        onClick={() => setTaskFilterStatus(status)}
-                        className={`px-2.5 py-1 rounded-lg font-semibold text-[11px] cursor-pointer transition-colors ${
-                          taskFilterStatus === status
-                            ? 'bg-indigo-600 text-white'
-                            : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-750'
-                        }`}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800/60 px-2.5 py-1.5 rounded-xl border border-gray-200/50 dark:border-gray-700/50">
+                      <span className="text-[11px] font-semibold text-gray-500">Estado:</span>
+                      <select
+                        value={taskFilterStatus}
+                        onChange={(e) => setTaskFilterStatus(e.target.value)}
+                        className="bg-transparent focus:outline-none font-semibold text-[11px] text-gray-800 dark:text-gray-100 cursor-pointer"
                       >
-                        {status === 'ALL' ? 'Todos' : status.replace('_', ' ')}
-                      </button>
-                    ))}
+                        <option value="ALL">Todas las Tareas</option>
+                        <option value="PENDIENTE">Pendientes</option>
+                        <option value="ACEPTADA">Aceptadas</option>
+                        <option value="EN_PROCESO">En Proceso</option>
+                        <option value="PENDIENTE_REVISION">En Revisión</option>
+                        <option value="APROBADA">Aprobadas</option>
+                        <option value="RECHAZADA">Rechazadas</option>
+                      </select>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800/60 px-2.5 py-1.5 rounded-xl border border-gray-200/50 dark:border-gray-700/50">
+                      <Calendar className="w-3.5 h-3.5 text-sky-500 shrink-0" />
+                      <select
+                        value={selectedWeekId}
+                        onChange={(e) => setSelectedWeekId(e.target.value)}
+                        className="bg-transparent focus:outline-none font-semibold text-[11px] text-gray-800 dark:text-gray-100 cursor-pointer"
+                      >
+                        <option value="ALL_WEEKS">Ver Historial Completo</option>
+                        {recentWeeks.map(w => (
+                          <option key={w.weekId} value={w.weekId}>
+                            {w.label} {w.isCurrentWeek ? '(Semana Actual)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 </div>
 
@@ -1343,12 +1422,56 @@ export default function AdminPanel({
                 exit={{ opacity: 0, y: -10 }}
                 className="space-y-4"
               >
-                <div>
-                  <h2 className="text-lg font-bold text-gray-900 dark:text-white tracking-tight">Nómina y Pagos Sugeridos</h2>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">Calculadora automatizada basada en tasa de cumplimiento para la base semanal de {formatCOP(settings.weeklyPaymentCOP)} COP.</p>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white dark:bg-gray-900 p-4 rounded-2xl border border-violet-100 dark:border-gray-800 shadow-sm">
+                  <div>
+                    <h2 className="text-lg font-bold text-gray-900 dark:text-white tracking-tight">Nómina y Pagos Semanales</h2>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      Calculadora automatizada basada en tasa de cumplimiento para la base semanal de {formatCOP(settings.weeklyPaymentCOP)} COP.
+                    </p>
+                  </div>
+                  
+                  <div className="flex items-center gap-2 bg-violet-50 dark:bg-gray-800 px-3 py-2 rounded-xl border border-violet-200 dark:border-gray-700">
+                    <Calendar className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                    <span className="text-xs font-bold text-gray-700 dark:text-gray-200">Semana:</span>
+                    <select
+                      value={selectedWeekId}
+                      onChange={(e) => setSelectedWeekId(e.target.value)}
+                      className="bg-transparent text-xs font-bold text-violet-700 dark:text-violet-300 focus:outline-none cursor-pointer"
+                    >
+                      {recentWeeks.map(w => (
+                        <option key={w.weekId} value={w.weekId}>
+                          {w.label} {w.isCurrentWeek ? '(Semana Actual)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
-                <div className="bg-white dark:bg-gray-900 border border-gray-150 dark:border-gray-800 rounded-xl overflow-x-auto shadow-sm">
+                {/* Payroll Metric Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                  <div className="bg-white dark:bg-gray-900 border border-violet-100 dark:border-gray-800 p-4 rounded-2xl shadow-sm">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Total Calculado ({selectedWeekInfo.weekId})</span>
+                    <span className="text-xl font-black text-gray-900 dark:text-white">
+                      {formatCOP(paymentEstimates.reduce((acc, curr) => acc + curr.suggestedPayment, 0))}
+                    </span>
+                  </div>
+
+                  <div className="bg-white dark:bg-gray-900 border border-violet-100 dark:border-gray-800 p-4 rounded-2xl shadow-sm">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Total Pagado Confirmado</span>
+                    <span className="text-xl font-black text-emerald-600 dark:text-emerald-400">
+                      {formatCOP(paymentEstimates.filter(p => p.isPaid).reduce((acc, curr) => acc + curr.suggestedPayment, 0))}
+                    </span>
+                  </div>
+
+                  <div className="bg-white dark:bg-gray-900 border border-violet-100 dark:border-gray-800 p-4 rounded-2xl shadow-sm">
+                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Pendiente de Pago (Domingo)</span>
+                    <span className="text-xl font-black text-amber-600 dark:text-amber-400">
+                      {formatCOP(paymentEstimates.filter(p => !p.isPaid).reduce((acc, curr) => acc + curr.suggestedPayment, 0))}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="bg-white dark:bg-gray-900 border border-violet-100 dark:border-gray-800 rounded-2xl overflow-x-auto shadow-sm">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="border-b border-gray-150 dark:border-gray-800 bg-gray-50 dark:bg-gray-900/50 text-gray-500 font-semibold uppercase">
@@ -1356,23 +1479,23 @@ export default function AdminPanel({
                         <th className="p-4 text-center">Cumplimiento</th>
                         <th className="p-4 text-center">Tareas Totales</th>
                         <th className="p-4 text-center">Aprobadas</th>
-                        <th className="p-4 text-center">Pendientes / Sin Completar</th>
-                        <th className="p-4 text-center">Rechazadas</th>
-                        <th className="p-4 text-right">Pago Sugerido (Proporcional)</th>
+                        <th className="p-4 text-center">Sin Completar</th>
+                        <th className="p-4 text-right">Pago Sugerido</th>
+                        <th className="p-4 text-center">Estado del Pago</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                       {paymentEstimates.length === 0 ? (
                         <tr>
                           <td colSpan={7} className="p-8 text-center text-gray-400">
-                            No hay trabajadores aprobados con datos de nómina disponibles.
+                            No hay trabajadores aprobados con datos de nómina en esta semana.
                           </td>
                         </tr>
                       ) : (
                         paymentEstimates.map((est, index) => (
                           <tr key={est.uid || `payment-${index}`} className="hover:bg-gray-50 dark:hover:bg-gray-800/40">
-                            <td className="p-4">
-                              <div className="font-bold text-gray-900 dark:text-white">{est.fullName}</div>
+                            <td className="p-4 font-bold text-gray-900 dark:text-white">
+                              {est.fullName}
                             </td>
                             <td className="p-4 text-center">
                               <span className="font-black text-indigo-600 dark:text-indigo-400 text-sm">
@@ -1382,12 +1505,31 @@ export default function AdminPanel({
                             <td className="p-4 text-center font-semibold">{est.totalTasks}</td>
                             <td className="p-4 text-center font-bold text-emerald-600 dark:text-emerald-400">{est.approvedTasks}</td>
                             <td className="p-4 text-center font-medium text-amber-600 dark:text-amber-400">{est.missingTasks}</td>
-                            <td className="p-4 text-center font-medium text-red-600 dark:text-red-400">{est.rejectedTasks}</td>
                             <td className="p-4 text-right">
                               <span className="font-black text-emerald-600 dark:text-emerald-400 text-base">
                                 {formatCOP(est.suggestedPayment)}
                               </span>
-                              <span className="text-[10px] text-gray-400 block font-normal">COP</span>
+                            </td>
+                            <td className="p-4 text-center">
+                              {est.isPaid ? (
+                                <span className="inline-flex items-center gap-1 px-3 py-1 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold text-xs rounded-xl border border-emerald-500/20">
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  <span>Pagado ✓</span>
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => handleConfirmPayment(est.uid, est.fullName, est.suggestedPayment, est.totalTasks, est.approvedTasks, est.fulfillmentRate)}
+                                  disabled={paymentActionLoading === est.uid}
+                                  className="px-3.5 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-bold text-xs rounded-xl cursor-pointer shadow-md shadow-emerald-500/20 transition-all disabled:opacity-50 flex items-center justify-center gap-1.5 mx-auto"
+                                >
+                                  {paymentActionLoading === est.uid ? (
+                                    <Clock className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <DollarSign className="w-3.5 h-3.5" />
+                                  )}
+                                  <span>Confirmar Pago Realizado</span>
+                                </button>
+                              )}
                             </td>
                           </tr>
                         ))
