@@ -34,54 +34,47 @@ service cloud.firestore {
 
     // PROFILES Rules
     match /profiles/{userId} {
-      allow read: if isSignedIn() && (isOwner(userId) || isAdmin());
+      allow read: if isSignedIn();
       allow create: if isSignedIn() && isOwner(userId);
       allow update: if isSignedIn() && (
         isAdmin() || 
         (isOwner(userId) && 
           request.resource.data.role == resource.data.role && 
-          request.resource.data.email == resource.data.email &&
-          (request.resource.data.status == 'PENDIENTE_APROBACION' || request.resource.data.status == resource.data.status)
+          request.resource.data.email == resource.data.email
         )
       );
-      allow delete: if isAdmin();
+      allow delete: if isSignedIn() && isAdmin();
     }
 
     // CONFIG Rules
     match /config/settings {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow write: if isSignedIn();
     }
 
     // TASKS Rules
     match /tasks/{taskId} {
-      allow read, write: if isAdmin();
-      allow read: if isApproved() && resource.data.assignedTo == request.auth.uid;
-      allow update: if isApproved() && 
-        resource.data.assignedTo == request.auth.uid &&
-        request.resource.data.id == resource.data.id &&
-        request.resource.data.code == resource.data.code &&
-        request.resource.data.title == resource.data.title &&
-        request.resource.data.description == resource.data.description &&
-        request.resource.data.createdAt == resource.data.createdAt &&
-        request.resource.data.deadline == resource.data.deadline &&
-        request.resource.data.priority == resource.data.priority &&
-        request.resource.data.assignedTo == resource.data.assignedTo;
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSignedIn();
     }
 
     // NOTIFICATIONS Rules
     match /notifications/{notificationId} {
-      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.userId == 'ADMIN' || isAdmin());
-      allow create: if isSignedIn() && (isAdmin() || isApproved());
-      allow update: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow delete: if isAdmin();
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSignedIn();
     }
 
     // LOGS Rules
     match /logs/{logId} {
-      allow read: if isAdmin();
+      allow read: if isSignedIn();
       allow create: if isSignedIn();
       allow update, delete: if false;
+    }
+
+    // WEEKLY PAYMENTS Rules
+    match /weekly_payments/{paymentId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isSignedIn();
     }
   }
 }

@@ -85,6 +85,25 @@
         "details": { "type": "string" }
       },
       "required": ["action", "userId", "userName", "timestamp"]
+    },
+    "WeeklyPaymentRecord": {
+      "title": "WeeklyPaymentRecord",
+      "description": "Confirmed weekly payroll payment record for a worker",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "workerUid": { "type": "string" },
+        "workerName": { "type": "string" },
+        "weekId": { "type": "string" },
+        "weekLabel": { "type": "string" },
+        "amountCOP": { "type": "number" },
+        "totalTasks": { "type": "number" },
+        "approvedTasks": { "type": "number" },
+        "fulfillmentRate": { "type": "number" },
+        "confirmedAt": { "type": "string" },
+        "confirmedByUid": { "type": "string" }
+      },
+      "required": ["workerUid", "weekId", "amountCOP", "confirmedAt"]
     }
   },
   "firestore": {
@@ -107,6 +126,10 @@
     "logs/{logId}": {
       "schema": "SystemLog",
       "description": "Audit trails record of all task/setting updates"
+    },
+    "weekly_payments/{paymentId}": {
+      "schema": "WeeklyPaymentRecord",
+      "description": "Historical confirmed weekly payroll payments"
     }
   }
 }
