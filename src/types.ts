@@ -32,6 +32,25 @@ export interface Task {
   status: TaskStatus;
   rejectionComment?: string;
   history: TaskHistoryItem[];
+  weekId?: string; // e.g., "2026-W31"
+  archived?: boolean; // True if archived from a past week after payment/reset
+  paid?: boolean; // True if confirmed paid by admin
+}
+
+export interface WeeklyPaymentRecord {
+  id: string; // e.g. "pay_mateo_2026-W31"
+  workerUid: string;
+  workerName: string;
+  weekId: string;
+  weekLabel: string;
+  totalTasks: number;
+  approvedTasks: number;
+  fulfillmentRate: number;
+  amountCOP: number;
+  paid: boolean;
+  paidAt?: string;
+  paidByAdminUid?: string;
+  paidByAdminName?: string;
 }
 
 export interface TaskHistoryItem {
@@ -83,4 +102,7 @@ export interface PaymentCalculation {
   fulfillmentRate: number; // percentage (0 - 100)
   suggestedPayment: number; // in COP
   missingTasks: number; // non-approved tasks
+  isPaid?: boolean;
+  paidAt?: string;
+  weekId?: string;
 }

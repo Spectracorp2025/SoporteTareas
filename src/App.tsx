@@ -19,7 +19,8 @@ import {
   SystemSettings, 
   SystemNotification, 
   SystemLog, 
-  TaskStatus 
+  TaskStatus,
+  WeeklyPaymentRecord
 } from './types';
 import { 
   Database, 
@@ -46,6 +47,7 @@ function AppContent() {
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [notifications, setNotifications] = useState<SystemNotification[]>([]);
   const [logs, setLogs] = useState<SystemLog[]>([]);
+  const [weeklyPayments, setWeeklyPayments] = useState<WeeklyPaymentRecord[]>([]);
 
   // UI States
   const [apiError, setApiError] = useState('');
@@ -67,6 +69,9 @@ function AppContent() {
     try {
       const fetchedSettings = await dbService.getSettings();
       setSettings(fetchedSettings);
+
+      const allPayments = await dbService.getWeeklyPayments();
+      setWeeklyPayments(allPayments);
 
       if (user.role === 'ADMIN') {
         // Admins can fetch all profiles, tasks, and system logs
@@ -165,6 +170,31 @@ function AppContent() {
     await refreshAllData();
   };
 
+  const handleConfirmWeeklyPayment = async (
+    workerUid: string,
+    workerName: string,
+    weekId: string,
+    weekLabel: string,
+    amountCOP: number,
+    totalTasks: number,
+    approvedTasks: number,
+    fulfillmentRate: number
+  ) => {
+    if (!user) return;
+    await dbService.confirmWeeklyPayment(
+      workerUid,
+      workerName,
+      weekId,
+      weekLabel,
+      amountCOP,
+      totalTasks,
+      approvedTasks,
+      fulfillmentRate,
+      user
+    );
+    await refreshAllData();
+  };
+
   const handleUpdateProfile = async (fields: { fullName: string; age: number; country: string; phone: string }) => {
     if (!user) return;
     const updatedUser = await authService.completeRegistration(user.uid, fields);
@@ -232,6 +262,8 @@ function AppContent() {
                 primaryColor: '#6366f1'
               }}
               logs={logs}
+              weeklyPayments={weeklyPayments}
+              onConfirmWeeklyPayment={handleConfirmWeeklyPayment}
               onApproveUser={handleApproveUser}
               onRejectUser={handleRejectUser}
               onDeleteUser={handleDeleteUser}
